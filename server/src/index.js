@@ -16,7 +16,9 @@ const __dirname = dirname(__filename);
 const app = express();
 const PORT = Number(process.env.PORT || 4000);
 const ALLOWED_DOMAIN = process.env.ALLOWED_DOMAIN || 'ucundinamarca.edu.co';
-const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
+
+// IMPORTANT: normalize trailing slash so Netlify origin matches browser Origin header.
+const CLIENT_ORIGIN = (process.env.CLIENT_ORIGIN || 'http://localhost:5173').replace(/\/$/, '');
 
 const gradientOptions = ['violet', 'cyan', 'pink', 'amber', 'emerald', 'blue'];
 
@@ -96,15 +98,30 @@ async function seedAdmin() {
   );
 
   const password = process.env.FIRST_ADMIN_PASSWORD || 'CundiConnection#2026';
+  const resetAdminPassword = process.env.RESET_FIRST_ADMIN_PASSWORD === 'true';
 
   const existing = await get('SELECT * FROM users WHERE email = ?', [email]);
+  const passwordHash = await bcrypt.hash(password, 12);
 
   if (existing) {
-    console.log(`Admin already exists: ${email}`);
+    if (resetAdminPassword) {
+      await run(
+        `UPDATE users
+         SET password_hash = ?,
+             status = 'approved',
+             role = 'admin',
+             approved_at = COALESCE(approved_at, CURRENT_TIMESTAMP)
+         WHERE email = ?`,
+        [passwordHash, email]
+      );
+
+      console.log(`🔐 Reset first admin password and ensured admin role: ${email}`);
+    } else {
+      console.log(`Admin already exists: ${email}`);
+    }
+
     return;
   }
-
-  const passwordHash = await bcrypt.hash(password, 12);
 
   await run(
     `INSERT INTO users
@@ -137,6 +154,7 @@ app.get('/api/health', (_req, res) => {
     allowedDomain: ALLOWED_DOMAIN,
     clientOrigin: CLIENT_ORIGIN,
     corsOrigins: allowedOrigins,
+    resetFirstAdminPassword: process.env.RESET_FIRST_ADMIN_PASSWORD === 'true',
   });
 });
 
